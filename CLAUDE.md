@@ -18,6 +18,10 @@ python main.py fetch-spot                              # Spot prices from Coinba
 python main.py fetch-futures                           # CME futures via IBKR
 python main.py fetch-historical --symbol IBIT --days 30  # Historical ETF data
 
+# Continuous futures (IBKR spot BTC.USD PAXOS + ContFuture)
+python examples/fetch_continuous_futures.py --start 2025-12-01 --end 2026-02-10
+python examples/fetch_continuous_futures.py --start 2025-12-01 --end 2026-02-10 --symbol BTC --bar-size "1 hour"
+
 # Backtest
 python main.py backtest --data data/file.csv --holding-days 30
 
@@ -40,7 +44,7 @@ All fetchers inherit from `BaseFetcher` (ABC) which defines:
 - `CoinbaseFetcher` - BTC-USD spot via Coinbase public API
 - `BinanceFetcher` - BTCUSDT spot + perpetual futures via Binance API
 - `IBKRFetcher` - CME futures + ETF-derived spot via Interactive Brokers (requires TWS/IB Gateway)
-- `IBKRHistoricalFetcher` - Historical data from IBKR
+- `IBKRHistoricalFetcher` - Historical data from IBKR (spot via Crypto BTC.USD PAXOS, futures via ContFuture)
 
 ### IBKR Connection
 
@@ -68,6 +72,11 @@ Signal thresholds based on monthly basis:
 - \>3.5% → FULL_EXIT
 - <0.2% or negative → STOP_LOSS
 
+### Examples (`examples/`)
+
+- `accumulate_futures.py` - Basis data accumulation (Binance spot + IBKR futures), supports `--continuous` for ContFuture
+- `fetch_continuous_futures.py` - Standalone continuous futures fetcher with IBKR spot (`Crypto('BTC', 'PAXOS', 'USD')`) + IBKR ContFuture, date-range based (`--start`/`--end`)
+
 ### Utils (`src/crypto_data/utils/`)
 
 - `expiry.py` - CME futures expiry calculations (last Friday of month)
@@ -85,3 +94,11 @@ Historical CSV format for backtesting:
 date,spot_price,futures_price,futures_expiry
 2024-01-01,42000.00,42500.00,2024-01-26
 ```
+
+Continuous futures CSV format (`fetch_continuous_futures.py`):
+```csv
+date,spot_price,futures_price,basis_absolute,basis_percent,annualized_basis,days_to_expiry,futures_expiry
+2025-12-03,92990.50,94536.00,1545.50,1.66,26.38,23,2025-12-26
+```
+
+Spot source: IBKR `Crypto('BTC', 'PAXOS', 'USD')` with `whatToShow="MIDPOINT"`. Futures source: IBKR `ContFuture` (auto-rolling).

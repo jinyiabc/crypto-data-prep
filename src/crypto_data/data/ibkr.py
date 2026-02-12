@@ -648,7 +648,11 @@ class IBKRHistoricalFetcher(IBKRFetcher):
                 start_date = end_date - timedelta(days=90)
 
             duration_days = (end_date - start_date).days
-            duration_str = f"{duration_days} D"
+            if duration_days > 365:
+                years = (duration_days // 365) + 1
+                duration_str = f"{years} Y"
+            else:
+                duration_str = f"{duration_days} D"
 
             # ContFuture does not allow endDateTime; use empty string (= now)
             bars = self.ib.reqHistoricalData(
@@ -669,6 +673,10 @@ class IBKRHistoricalFetcher(IBKRFetcher):
                     date_obj = bar.date
                 else:
                     date_obj = datetime.combine(bar.date, datetime.min.time())
+
+                # Filter to requested date range
+                if date_obj.date() < start_date.date():
+                    continue
 
                 result.append({
                     "date": date_obj,

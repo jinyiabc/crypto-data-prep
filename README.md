@@ -4,7 +4,7 @@ Python toolkit for cryptocurrency data fetching, futures basis analysis, and bac
 
 ## Features
 
-- **Multi-source spot prices** - Coinbase, Binance, IBKR ETF proxy (IBIT/FBTC/GBTC)
+- **Multi-source spot prices** - Coinbase, Binance, IBKR ETF proxy (IBIT/FBTC/GBTC), IBKR Crypto (BTC.USD PAXOS)
 - **CME futures data** - Single contract and continuous futures via IBKR
 - **Futures basis analysis** - Absolute basis, percentage, annualized basis, days to expiry
 - **Continuous futures** - Auto-rolling across contract expiries (manual + IBKR ContFuture)
@@ -24,6 +24,11 @@ pip install -e ".[dev]"             # With dev tools (pytest, black, flake8)
 - Python >= 3.8
 - TWS or IB Gateway running for IBKR features (port 7496 for TWS Live, 7497 for Paper)
 
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 ## Quick Start
 
 ### Fetch spot + futures basis data
@@ -36,6 +41,17 @@ python examples/accumulate_futures.py --days 30
 
 ```bash
 python examples/accumulate_futures.py --continuous --days 90
+```
+
+### Continuous futures only (IBKR spot + ContFuture)
+
+Fetches both spot (BTC.USD on PAXOS) and continuous futures from IBKR between specific dates:
+
+```bash
+python examples/fetch_continuous_futures.py --start 2025-12-01 --end 2026-02-10
+python examples/fetch_continuous_futures.py --start 2025-12-01 --end 2026-02-10 --symbol BTC
+python examples/fetch_continuous_futures.py --start 2025-12-01 --end 2026-02-10 --bar-size "1 hour"
+python examples/fetch_continuous_futures.py --start 2025-12-01 --end 2026-02-10 -o data/my_cont.csv --no-csv
 ```
 
 ### Specify contract expiry and output file
@@ -64,7 +80,7 @@ date,spot_price,futures_price,future_continuous,futures_expiry,basis_absolute,ba
 | Column | Description |
 |--------|-------------|
 | `date` | Trading date |
-| `spot_price` | BTC spot price from Binance (BTCUSDT) |
+| `spot_price` | BTC spot price (Binance BTCUSDT or IBKR BTC.USD PAXOS) |
 | `futures_price` | Front-month CME futures price |
 | `future_continuous` | IBKR ContFuture continuous price (auto-rolled) |
 | `futures_expiry` | Expiry date of the front-month contract |
@@ -92,7 +108,8 @@ crypto-data-prep/
 │       ├── config.py          # ConfigLoader
 │       └── logging.py         # LoggingMixin
 ├── examples/
-│   └── accumulate_futures.py  # CLI example for basis data accumulation
+│   ├── accumulate_futures.py       # Basis data accumulation (Binance spot + IBKR futures)
+│   └── fetch_continuous_futures.py # Continuous futures only (IBKR spot PAXOS + ContFuture)
 ├── tests/
 │   └── test_fetch_historical.py
 ├── config/
