@@ -4,5 +4,19 @@
     "port": 7496,
     "client_id": 1,
     "timeout": 10
-  }
+  },
+  "databento": {
+    "data_dir": "databento"
+  },
+  "pairs": {
+    "BTC": {
+      "spot": { "symbol": "BTC", "exchange": "PAXOS", "currency": "USD" },
+      "futures": { "symbol": "MBT", "exchange": "CME" }
+    },
+    "ETH": {
+      "spot": { "symbol": "ETH", "exchange": "PAXOS", "currency": "USD" },
+      "futures": { "symbol": "MET", "exchange": "CME" }
+    }
+  },
+  "default_pair": "BTC"
 }

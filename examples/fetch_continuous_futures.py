@@ -2,17 +2,19 @@
 """
 Fetch historical continuous futures data between start and end date.
 
-Uses IBKR ContFuture for auto-rolling futures prices and
-IBKR Crypto (BTC.USD on PAXOS) for spot prices.
+Supports Databento local CSV (default) or IBKR ContFuture for futures prices,
+and IBKR Crypto (BTC.USD on PAXOS) for spot prices.
 Computes basis metrics and exports to CSV.
 
 Requirements:
-    - TWS or IB Gateway running
-    - pip install -e ".[ibkr]"
+    - For --futures-source databento (default): Databento CSV in databento/<PAIR>/ folder
+    - For --futures-source ibkr: TWS or IB Gateway running
+    - pip install -e ".[ibkr]"  (only when using IBKR for spot or futures)
 
 Usage:
     python examples/fetch_continuous_futures.py --start 2025-12-01 --end 2026-02-10
     python examples/fetch_continuous_futures.py --start 2025-12-01 --end 2026-02-10 --symbol BTC
+    python examples/fetch_continuous_futures.py --start 2025-12-01 --end 2026-02-10 --futures-source ibkr
     python examples/fetch_continuous_futures.py --start 2025-12-01 --end 2026-02-10 --bar-size "1 hour"
     python examples/fetch_continuous_futures.py --start 2025-12-01 --end 2026-02-10 -o data/my_cont.csv
 """
@@ -26,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from crypto_data.data.ibkr import IBKRHistoricalFetcher
+from crypto_data.data.databento import DatabentoLocalFetcher
 from crypto_data.utils.config import ConfigLoader
 from crypto_data.utils.expiry import (
     generate_expiry_schedule,
@@ -45,11 +48,10 @@ CSV_FIELDNAMES = [
 ]
 
 
-def fetch_ibkr_spot_history(fetcher, start_date, end_date, bar_size="1 day"):
+def fetch_ibkr_spot_history(fetcher, start_date, end_date, bar_size="1 day", spot_config=None):
     """
-    Fetch historical BTC spot prices from IBKR using Crypto contract.
+    Fetch historical spot prices from IBKR using Crypto contract.
 
-    Uses BTC.USD on PAXOS exchange for actual BTC spot price.
     Automatically chunks requests > 365 days into yearly segments.
 
     Args:
@@ -57,6 +59,8 @@ def fetch_ibkr_spot_history(fetcher, start_date, end_date, bar_size="1 day"):
         start_date: Start date
         end_date: End date
         bar_size: Bar size ('1 day', '1 hour', etc.)
+        spot_config: Dict with 'symbol', 'exchange', 'currency' keys.
+                     Defaults to BTC on PAXOS in USD.
 
     Returns:
         List of dicts with date and spot_price
@@ -64,11 +68,14 @@ def fetch_ibkr_spot_history(fetcher, start_date, end_date, bar_size="1 day"):
     import time
     from ib_insync import Crypto
 
+    if spot_config is None:
+        spot_config = {"symbol": "BTC", "exchange": "PAXOS", "currency": "USD"}
+
     try:
-        contract = Crypto("BTC", "PAXOS", "USD")
+        contract = Crypto(spot_config["symbol"], spot_config["exchange"], spot_config["currency"])
         fetcher.ib.qualifyContracts(contract)
 
-        print(f"    Fetching BTC.USD spot from PAXOS...")
+        print(f"    Fetching {spot_config['symbol']}.{spot_config['currency']} spot from {spot_config['exchange']}...")
 
         # Chunk into <= 365-day segments to stay within IBKR limits
         max_days = 365
@@ -122,7 +129,7 @@ def fetch_ibkr_spot_history(fetcher, start_date, end_date, bar_size="1 day"):
                 time.sleep(1)
 
         result.sort(key=lambda x: x["date"])
-        print(f"[OK] Fetched {len(result)} spot bars from IBKR (BTC.USD PAXOS)")
+        print(f"[OK] Fetched {len(result)} spot bars from IBKR ({spot_config['symbol']}.{spot_config['currency']} {spot_config['exchange']})")
         return result
 
     except Exception as e:
@@ -251,8 +258,12 @@ def main():
         help="End date (YYYY-MM-DD)",
     )
     parser.add_argument(
-        "--symbol", default="MBT", choices=["MBT", "BTC"],
-        help="Futures symbol (default: MBT)",
+        "--pair",
+        help="Investment pair from config (e.g. BTC, ETH). Default: config's default_pair",
+    )
+    parser.add_argument(
+        "--symbol",
+        help="Override futures symbol (default: from pair config)",
     )
     parser.add_argument(
         "--bar-size", default="1 day",
@@ -260,11 +271,19 @@ def main():
     )
     parser.add_argument(
         "--output", "-o",
-        help="Output CSV path (default: data/BTC_continuous_<start>_<end>.csv)",
+        help="Output CSV path (default: data/<PAIR>_continuous_<start>_<end>.csv)",
     )
     parser.add_argument(
         "--config", "-c", default="config/config.json",
         help="Config file path",
+    )
+    parser.add_argument(
+        "--futures-source", choices=["databento", "ibkr"], default="databento",
+        help="Futures data source (default: databento)",
+    )
+    parser.add_argument(
+        "--databento-dir",
+        help="Databento data directory (default: from config or 'databento')",
     )
     parser.add_argument(
         "--no-csv", action="store_true",
@@ -279,41 +298,78 @@ def main():
         print("[X] End date must be after start date.")
         sys.exit(1)
 
-    print(f"\n*** Continuous Futures Fetcher ***")
-    print(f"    Period: {args.start} to {args.end}")
-    print(f"    Symbol: {args.symbol} (CME ContFuture)")
-    print(f"    Spot:   IBKR BTC.USD (PAXOS)")
-    print(f"    Bar:    {args.bar_size}\n")
-
-    # --- Step 1: Connect to IBKR ---
+    # --- Resolve pair config ---
     config_loader = ConfigLoader(args.config)
-    fetcher = IBKRHistoricalFetcher.from_config(config_loader.ibkr)
+    pair_name = args.pair or config_loader.default_pair
+    pair_config = config_loader.get_pair(pair_name)
+    spot_config = pair_config["spot"]
+    futures_symbol = args.symbol or pair_config["futures"]["symbol"]
+    futures_exchange = pair_config["futures"].get("exchange", "CME")
 
-    if not fetcher.connect():
-        print("[X] Failed to connect to IBKR. Is TWS/Gateway running?")
-        sys.exit(1)
+    # Resolve databento dir from CLI flag or config, with pair subfolder
+    databento_base = args.databento_dir or config_loader.databento.get("data_dir", "databento")
+    databento_dir = str(Path(databento_base) / pair_name)
 
-    # --- Step 2: Fetch continuous futures from IBKR ---
-    print("[1/2] Fetching continuous futures from IBKR...")
-    cont_data = fetcher.get_historical_continuous_futures(
-        symbol=args.symbol,
-        start_date=start_date,
-        end_date=end_date,
-        bar_size=args.bar_size,
-    )
+    futures_label = "Databento" if args.futures_source == "databento" else f"IBKR ({futures_exchange} ContFuture)"
+
+    print(f"\n*** Continuous Futures Fetcher ***")
+    print(f"    Period:  {args.start} to {args.end}")
+    print(f"    Pair:    {pair_name}")
+    print(f"    Symbol:  {futures_symbol}")
+    print(f"    Futures: {futures_label}")
+    print(f"    Spot:    IBKR {spot_config['symbol']}.{spot_config['currency']} ({spot_config['exchange']})")
+    print(f"    Bar:     {args.bar_size}\n")
+
+    # --- Step 1: Connect to IBKR (only if needed) ---
+    fetcher = None
+    if args.futures_source == "ibkr":
+        fetcher = IBKRHistoricalFetcher.from_config(config_loader.ibkr)
+        if not fetcher.connect():
+            print("[X] Failed to connect to IBKR. Is TWS/Gateway running?")
+            sys.exit(1)
+
+    # --- Step 2: Fetch continuous futures ---
+    if args.futures_source == "databento":
+        print("[1/2] Fetching continuous futures from Databento...")
+        db_fetcher = DatabentoLocalFetcher(data_dir=databento_dir)
+        cont_data = db_fetcher.get_historical_continuous_futures(
+            symbol=futures_symbol,
+            exchange=futures_exchange,
+            start_date=start_date,
+            end_date=end_date,
+            bar_size=args.bar_size,
+        )
+    else:
+        print("[1/2] Fetching continuous futures from IBKR...")
+        cont_data = fetcher.get_historical_continuous_futures(
+            symbol=futures_symbol,
+            exchange=futures_exchange,
+            start_date=start_date,
+            end_date=end_date,
+            bar_size=args.bar_size,
+        )
 
     if not cont_data:
-        fetcher.disconnect()
+        if fetcher:
+            fetcher.disconnect()
         print("[X] No continuous futures data returned.")
         sys.exit(1)
 
-    # --- Step 3: Fetch spot from IBKR (BTC.USD on PAXOS) ---
-    print("[2/2] Fetching spot prices from IBKR (BTC.USD PAXOS)...")
+    # --- Step 3: Fetch spot from IBKR ---
+    # Spot always comes from IBKR, so connect if not already connected
+    if fetcher is None:
+        fetcher = IBKRHistoricalFetcher.from_config(config_loader.ibkr)
+        if not fetcher.connect():
+            print("[X] Failed to connect to IBKR for spot data. Is TWS/Gateway running?")
+            sys.exit(1)
+
+    print(f"[2/2] Fetching spot prices from IBKR ({spot_config['symbol']}.{spot_config['currency']} {spot_config['exchange']})...")
     spot_data = fetch_ibkr_spot_history(
         fetcher=fetcher,
         start_date=start_date,
         end_date=end_date,
         bar_size=args.bar_size,
+        spot_config=spot_config,
     )
 
     fetcher.disconnect()
@@ -336,7 +392,7 @@ def main():
 
     # --- Step 6: Export to CSV ---
     if not args.no_csv:
-        output_file = args.output or f"data/BTC_continuous_{args.start}_{args.end}.csv"
+        output_file = args.output or f"data/{pair_name}_continuous_{args.start}_{args.end}.csv"
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
         save_csv(data, output_file)
 

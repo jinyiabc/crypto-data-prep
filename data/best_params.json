@@ -1,0 +1,6 @@
+{
+  "entry_threshold": 0.014,
+  "stop_loss_threshold": 0.004,
+  "exit_threshold": 0.06,
+  "holding_days": 10
+}

@@ -149,7 +149,10 @@ class Backtester:
         self.config = config
         self.account_size = getattr(config, "account_size", 200000)
         self.funding_cost_annual = getattr(config, "funding_cost_annual", 0.05)
-        self.min_monthly_basis = getattr(config, "min_monthly_basis", 0.005)
+        # Signal thresholds (monthly basis, as decimals)
+        self.entry_threshold = getattr(config, "entry_threshold", 0.005)
+        self.stop_loss_threshold = getattr(config, "stop_loss_threshold", 0.002)
+        self.exit_threshold = getattr(config, "exit_threshold", 0.035)
 
     def generate_signal(
         self, spot_price: float, futures_price: float, days_to_expiry: int
@@ -174,20 +177,19 @@ class Backtester:
         # Stop loss conditions
         if basis_pct < 0:
             return Signal.STOP_LOSS
-        if monthly_basis < 0.002:
+        if monthly_basis < self.stop_loss_threshold:
             return Signal.STOP_LOSS
 
         # Exit conditions
-        if monthly_basis > 0.035:
+        if monthly_basis > self.exit_threshold:
             return Signal.FULL_EXIT
-        if monthly_basis > 0.025:
+        partial_exit_threshold = (self.entry_threshold + self.exit_threshold) / 2
+        if monthly_basis > partial_exit_threshold:
             return Signal.PARTIAL_EXIT
 
         # Entry conditions
-        if monthly_basis > 0.01:
+        if monthly_basis > self.entry_threshold:
             return Signal.STRONG_ENTRY
-        if monthly_basis > 0.005:
-            return Signal.ACCEPTABLE_ENTRY
 
         return Signal.NO_ENTRY
 
@@ -207,14 +209,15 @@ class Backtester:
         with open(csv_path, "r") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                data.append(
-                    {
-                        "date": datetime.fromisoformat(row["date"]),
-                        "spot_price": float(row["spot_price"]),
-                        "futures_price": float(row["futures_price"]),
-                        "futures_expiry": datetime.fromisoformat(row["futures_expiry"]),
-                    }
-                )
+                entry = {
+                    "date": datetime.fromisoformat(row["date"]),
+                    "spot_price": float(row["spot_price"]),
+                    "futures_price": float(row["futures_price"]),
+                    "futures_expiry": datetime.fromisoformat(row["futures_expiry"]),
+                }
+                if "contract" in row and row["contract"]:
+                    entry["contract"] = row["contract"]
+                data.append(entry)
         return data
 
     def generate_sample_data(
@@ -282,6 +285,7 @@ class Backtester:
         """
         result = BacktestResult(initial_capital=self.account_size)
         current_trade: Optional[Trade] = None
+        trade_contract: Optional[str] = None
         equity_curve = [result.initial_capital]
         daily_returns = []
 
@@ -293,6 +297,7 @@ class Backtester:
             futures_price = data_point["futures_price"]
             expiry = data_point["futures_expiry"]
             current_date = data_point["date"]
+            current_contract = data_point.get("contract")
 
             days_to_expiry = (expiry - current_date).days
             signal = self.generate_signal(spot_price, futures_price, days_to_expiry)
@@ -306,7 +311,11 @@ class Backtester:
                 # Exit conditions
                 should_exit = False
 
-                if signal in [Signal.STOP_LOSS, Signal.FULL_EXIT]:
+                # Force-close at contract boundary
+                if current_contract and trade_contract and current_contract != trade_contract:
+                    should_exit = True
+                    current_trade.status = "contract_roll"
+                elif signal in [Signal.STOP_LOSS, Signal.FULL_EXIT]:
                     should_exit = True
                     current_trade.status = (
                         "stopped_out" if signal == Signal.STOP_LOSS else "closed"
@@ -365,6 +374,7 @@ class Backtester:
                         entry_basis=basis_absolute,
                         position_size=1.0,
                     )
+                    trade_contract = current_contract
 
         # Close any remaining open trade
         if current_trade:

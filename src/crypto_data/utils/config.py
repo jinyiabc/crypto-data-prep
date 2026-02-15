@@ -8,7 +8,7 @@ Consolidated from crypto_data_monitor.py and crypto_data_cli.py
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 
 class ConfigLoader:
@@ -35,6 +35,20 @@ class ConfigLoader:
             "client_id": 1,
             "timeout": 10,
         },
+        "databento": {
+            "data_dir": "databento",
+        },
+        "pairs": {
+            "BTC": {
+                "spot": {"symbol": "BTC", "exchange": "PAXOS", "currency": "USD"},
+                "futures": {"symbol": "MBT", "exchange": "CME"},
+            },
+            "ETH": {
+                "spot": {"symbol": "ETH", "exchange": "PAXOS", "currency": "USD"},
+                "futures": {"symbol": "MET", "exchange": "CME"},
+            },
+        },
+        "default_pair": "BTC",
     }
 
     def __init__(self, config_path: Optional[str] = None):
@@ -84,11 +98,24 @@ class ConfigLoader:
         return self._config
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Get a configuration value with fallback to defaults."""
-        if key in self._config:
-            return self._config[key]
-        if key in self.DEFAULT_CONFIG:
-            return self.DEFAULT_CONFIG[key]
+        """Get a configuration value with fallback to defaults.
+
+        For dict values, performs a shallow merge of defaults with user config
+        so user-defined entries add to (rather than replace) defaults.
+        """
+        user_val = self._config.get(key)
+        default_val = self.DEFAULT_CONFIG.get(key)
+
+        if user_val is not None and default_val is not None:
+            if isinstance(user_val, dict) and isinstance(default_val, dict):
+                merged = default_val.copy()
+                merged.update(user_val)
+                return merged
+            return user_val
+        if user_val is not None:
+            return user_val
+        if default_val is not None:
+            return default_val
         return default
 
     def get_all(self) -> Dict[str, Any]:
@@ -148,3 +175,42 @@ class ConfigLoader:
     def ibkr(self) -> Dict[str, Any]:
         """Get IBKR connection settings."""
         return self.get("ibkr")
+
+    @property
+    def databento(self) -> Dict[str, Any]:
+        """Get Databento configuration."""
+        return self.get("databento")
+
+    @property
+    def pairs(self) -> Dict[str, Any]:
+        """Get all configured investment pairs."""
+        return self.get("pairs")
+
+    @property
+    def default_pair(self) -> str:
+        """Get the default pair name."""
+        return self.get("default_pair", "BTC")
+
+    def get_pair(self, name: str = None) -> Dict[str, Any]:
+        """Get pair config by name, falling back to default_pair.
+
+        Args:
+            name: Pair name (e.g., 'BTC', 'ETH'). None uses default_pair.
+
+        Returns:
+            Dict with 'spot' and 'futures' sub-dicts.
+
+        Raises:
+            ValueError: If the pair name is not found in config.
+        """
+        all_pairs = self.pairs
+        pair_name = name or self.default_pair
+        if pair_name not in all_pairs:
+            raise ValueError(
+                f"Unknown pair '{pair_name}'. Available: {list(all_pairs.keys())}"
+            )
+        return all_pairs[pair_name]
+
+    def available_pairs(self) -> List[str]:
+        """Return list of configured pair names."""
+        return list(self.pairs.keys())

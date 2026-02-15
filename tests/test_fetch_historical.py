@@ -122,7 +122,7 @@ class TestFuturesAccumulator:
         return FuturesAccumulator(fetcher)
 
     @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
-    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_binance_spot_history")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
     def test_returns_merged_data_with_basis(self, mock_spot, mock_futures):
         """Test that spot and futures are merged with basis calculations."""
         expiry_date = get_last_friday_of_month(2026, 3)
@@ -140,6 +140,7 @@ class TestFuturesAccumulator:
             start_date=datetime(2026, 1, 15),
             end_date=datetime(2026, 1, 16),
             expiry="202603",
+            futures_source="ibkr",
         )
 
         assert len(result) == 2
@@ -156,7 +157,7 @@ class TestFuturesAccumulator:
         )
 
     @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
-    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_binance_spot_history")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
     def test_skips_dates_without_futures(self, mock_spot, mock_futures):
         """Dates present in spot but missing from futures are skipped."""
         expiry_date = get_last_friday_of_month(2026, 3)
@@ -176,6 +177,7 @@ class TestFuturesAccumulator:
             start_date=datetime(2026, 1, 15),
             end_date=datetime(2026, 1, 17),
             expiry="202603",
+            futures_source="ibkr",
         )
 
         assert len(result) == 2
@@ -183,7 +185,7 @@ class TestFuturesAccumulator:
         assert result[1]["date"] == datetime(2026, 1, 17)
 
     @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
-    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_binance_spot_history")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
     def test_returns_empty_when_spot_fails(self, mock_spot, mock_futures):
         """Returns empty list when Binance spot data fetch fails."""
         mock_spot.return_value = []
@@ -193,13 +195,14 @@ class TestFuturesAccumulator:
             start_date=datetime(2026, 1, 1),
             end_date=datetime(2026, 1, 31),
             expiry="202603",
+            futures_source="ibkr",
         )
 
         assert result == []
         mock_futures.assert_not_called()
 
     @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
-    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_binance_spot_history")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
     def test_returns_empty_when_futures_fails(self, mock_spot, mock_futures):
         """Returns empty list when futures data fetch fails."""
         mock_spot.return_value = [
@@ -212,12 +215,13 @@ class TestFuturesAccumulator:
             start_date=datetime(2026, 1, 1),
             end_date=datetime(2026, 1, 31),
             expiry="202603",
+            futures_source="ibkr",
         )
 
         assert result == []
 
     @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
-    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_binance_spot_history")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
     @patch("crypto_data.data.accumulator.get_front_month_expiry_str", return_value="202603")
     def test_defaults_to_front_month_expiry(self, mock_expiry, mock_spot, mock_futures):
         """Uses front-month expiry when none specified."""
@@ -232,6 +236,7 @@ class TestFuturesAccumulator:
         acc.accumulate(
             start_date=datetime(2026, 1, 15),
             end_date=datetime(2026, 1, 15),
+            futures_source="ibkr",
         )
 
         mock_expiry.assert_called_once()
@@ -253,7 +258,7 @@ class TestFuturesAccumulator:
         assert result == []
 
     @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
-    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_binance_spot_history")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
     def test_to_csv(self, mock_spot, mock_futures, tmp_path):
         """Test CSV export writes correct columns and values."""
         expiry_date = get_last_friday_of_month(2026, 3)
@@ -269,6 +274,7 @@ class TestFuturesAccumulator:
             start_date=datetime(2026, 1, 15),
             end_date=datetime(2026, 1, 15),
             expiry="202603",
+            futures_source="ibkr",
         )
 
         output_file = tmp_path / "test_basis.csv"
@@ -288,6 +294,84 @@ class TestFuturesAccumulator:
             assert int(row["days_to_expiry"]) == (expiry_date - datetime(2026, 1, 15)).days
 
 
+class TestAccumulatorExchangeAndSpotConfig:
+    """Tests for exchange and spot_config threading in FuturesAccumulator."""
+
+    def _make_accumulator(self):
+        fetcher = IBKRHistoricalFetcher()
+        fetcher.connected = True
+        return FuturesAccumulator(fetcher)
+
+    @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
+    def test_accumulate_threads_exchange_to_fetcher(self, mock_spot, mock_futures):
+        """accumulate() passes exchange param to get_historical_futures."""
+        expiry_date = get_last_friday_of_month(2026, 3)
+        mock_spot.return_value = [
+            {"date": datetime(2026, 1, 15), "spot_price": 92500.0},
+        ]
+        mock_futures.return_value = [
+            {"date": datetime(2026, 1, 15), "futures_price": 93500.0, "expiry": expiry_date},
+        ]
+
+        acc = self._make_accumulator()
+        acc.accumulate(
+            start_date=datetime(2026, 1, 15),
+            end_date=datetime(2026, 1, 15),
+            expiry="202603",
+            exchange="NYMEX",
+            futures_source="ibkr",
+        )
+
+        assert mock_futures.call_args.kwargs["exchange"] == "NYMEX"
+
+    @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
+    def test_accumulate_threads_spot_config(self, mock_spot, mock_futures):
+        """accumulate() passes spot_config through to _fetch_spot."""
+        expiry_date = get_last_friday_of_month(2026, 3)
+        mock_spot.return_value = [
+            {"date": datetime(2026, 1, 15), "spot_price": 3500.0},
+        ]
+        mock_futures.return_value = [
+            {"date": datetime(2026, 1, 15), "futures_price": 3600.0, "expiry": expiry_date},
+        ]
+
+        custom_spot = {"symbol": "ETH", "exchange": "PAXOS", "currency": "USD"}
+        acc = self._make_accumulator()
+        acc.accumulate(
+            start_date=datetime(2026, 1, 15),
+            end_date=datetime(2026, 1, 15),
+            expiry="202603",
+            spot_config=custom_spot,
+            futures_source="ibkr",
+        )
+
+        assert mock_spot.call_args.kwargs["spot_config"] == custom_spot
+
+    @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
+    def test_accumulate_defaults_exchange_to_cme(self, mock_spot, mock_futures):
+        """accumulate() defaults exchange to CME when not specified."""
+        expiry_date = get_last_friday_of_month(2026, 3)
+        mock_spot.return_value = [
+            {"date": datetime(2026, 1, 15), "spot_price": 92500.0},
+        ]
+        mock_futures.return_value = [
+            {"date": datetime(2026, 1, 15), "futures_price": 93500.0, "expiry": expiry_date},
+        ]
+
+        acc = self._make_accumulator()
+        acc.accumulate(
+            start_date=datetime(2026, 1, 15),
+            end_date=datetime(2026, 1, 15),
+            expiry="202603",
+            futures_source="ibkr",
+        )
+
+        assert mock_futures.call_args.kwargs.get("exchange", "CME") == "CME"
+
+
 class TestAccumulateContinuous:
     """Tests for FuturesAccumulator.accumulate_continuous."""
 
@@ -298,7 +382,7 @@ class TestAccumulateContinuous:
 
     @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_continuous_futures")
     @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
-    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_binance_spot_history")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
     def test_uses_front_month_at_start_date(self, mock_spot, mock_futures, mock_cont):
         """Test that futures_price uses front-month contract at start_date."""
         # start_date Jan 20 -> front-month is Jan (last Friday = Jan 30)
@@ -327,6 +411,7 @@ class TestAccumulateContinuous:
         result = acc.accumulate_continuous(
             start_date=datetime(2026, 1, 20),
             end_date=datetime(2026, 2, 3),
+            futures_source="ibkr",
         )
 
         assert len(result) == 3
@@ -350,7 +435,7 @@ class TestAccumulateContinuous:
         assert mock_futures.call_args.kwargs["expiry"] == "202601"
 
     @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
-    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_binance_spot_history")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
     def test_returns_empty_when_spot_fails(self, mock_spot, mock_futures):
         """Returns empty list when Binance spot fetch fails."""
         mock_spot.return_value = []
@@ -359,13 +444,14 @@ class TestAccumulateContinuous:
         result = acc.accumulate_continuous(
             start_date=datetime(2026, 1, 1),
             end_date=datetime(2026, 2, 28),
+            futures_source="ibkr",
         )
 
         assert result == []
         mock_futures.assert_not_called()
 
     @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
-    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_binance_spot_history")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
     def test_returns_empty_when_futures_fail(self, mock_spot, mock_futures):
         """Returns empty list when futures contract returns no data."""
         mock_spot.return_value = [
@@ -377,9 +463,64 @@ class TestAccumulateContinuous:
         result = acc.accumulate_continuous(
             start_date=datetime(2026, 1, 15),
             end_date=datetime(2026, 1, 15),
+            futures_source="ibkr",
         )
 
         assert result == []
+
+    @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_continuous_futures")
+    @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
+    def test_continuous_threads_exchange(self, mock_spot, mock_futures, mock_cont):
+        """accumulate_continuous() passes exchange to both futures calls."""
+        jan_expiry = get_last_friday_of_month(2026, 1)
+        mock_spot.return_value = [
+            {"date": datetime(2026, 1, 20), "spot_price": 90000.0},
+        ]
+        mock_futures.return_value = [
+            {"date": datetime(2026, 1, 20), "futures_price": 91000.0, "expiry": jan_expiry},
+        ]
+        mock_cont.return_value = [
+            {"date": datetime(2026, 1, 20), "futures_price": 91100.0},
+        ]
+
+        acc = self._make_accumulator()
+        acc.accumulate_continuous(
+            start_date=datetime(2026, 1, 20),
+            end_date=datetime(2026, 1, 20),
+            exchange="NYMEX",
+            futures_source="ibkr",
+        )
+
+        assert mock_futures.call_args.kwargs["exchange"] == "NYMEX"
+        assert mock_cont.call_args.kwargs["exchange"] == "NYMEX"
+
+    @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_continuous_futures")
+    @patch("crypto_data.data.ibkr.IBKRHistoricalFetcher.get_historical_futures")
+    @patch("crypto_data.data.accumulator.FuturesAccumulator._fetch_spot")
+    def test_continuous_threads_spot_config(self, mock_spot, mock_futures, mock_cont):
+        """accumulate_continuous() passes spot_config to _fetch_spot."""
+        jan_expiry = get_last_friday_of_month(2026, 1)
+        mock_spot.return_value = [
+            {"date": datetime(2026, 1, 20), "spot_price": 3500.0},
+        ]
+        mock_futures.return_value = [
+            {"date": datetime(2026, 1, 20), "futures_price": 3600.0, "expiry": jan_expiry},
+        ]
+        mock_cont.return_value = [
+            {"date": datetime(2026, 1, 20), "futures_price": 3610.0},
+        ]
+
+        custom_spot = {"symbol": "ETH", "exchange": "PAXOS", "currency": "USD"}
+        acc = self._make_accumulator()
+        acc.accumulate_continuous(
+            start_date=datetime(2026, 1, 20),
+            end_date=datetime(2026, 1, 20),
+            spot_config=custom_spot,
+            futures_source="ibkr",
+        )
+
+        assert mock_spot.call_args.kwargs["spot_config"] == custom_spot
 
 
 class TestGetHistoricalContinuousFutures:

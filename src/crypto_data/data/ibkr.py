@@ -213,14 +213,15 @@ class IBKRFetcher(BaseFetcher):
         return None
 
     def fetch_futures_price(
-        self, expiry: str = None, symbol: str = "MBT"
+        self, expiry: str = None, symbol: str = "MBT", exchange: str = "CME"
     ) -> Optional[Dict[str, Any]]:
         """
-        Fetch CME Bitcoin futures price.
+        Fetch Bitcoin futures price.
 
         Args:
             expiry: Contract expiry in YYYYMM format (None = front-month)
             symbol: 'MBT' (Micro 0.1 BTC) or 'BTC' (Standard 5 BTC)
+            exchange: Futures exchange (default: 'CME')
 
         Returns:
             Dictionary with futures data or None
@@ -236,7 +237,7 @@ class IBKRFetcher(BaseFetcher):
         from ib_insync import Future
 
         try:
-            btc_future = Future(symbol, expiry, "CME")
+            btc_future = Future(symbol, expiry, exchange)
             self.log(f"Looking for {symbol} futures expiring {expiry}...")
 
             self.ib.qualifyContracts(btc_future)
@@ -274,7 +275,7 @@ class IBKRFetcher(BaseFetcher):
 
                 return {
                     "symbol": symbol,
-                    "exchange": "CME",
+                    "exchange": exchange,
                     "expiry": expiry,
                     "local_symbol": btc_future.localSymbol,
                     "futures_price": futures_price,
@@ -523,6 +524,7 @@ class IBKRHistoricalFetcher(IBKRFetcher):
         self,
         expiry: str = None,
         symbol: str = "MBT",
+        exchange: str = "CME",
         start_date: datetime = None,
         end_date: datetime = None,
         bar_size: str = "1 day",
@@ -533,6 +535,7 @@ class IBKRHistoricalFetcher(IBKRFetcher):
         Args:
             expiry: Contract expiry (YYYYMM), None = front-month
             symbol: MBT or BTC
+            exchange: Futures exchange (default: 'CME')
             start_date: Start date
             end_date: End date
             bar_size: Bar size
@@ -551,7 +554,7 @@ class IBKRHistoricalFetcher(IBKRFetcher):
         from ib_insync import Future
 
         try:
-            future = Future(symbol, expiry, "CME")
+            future = Future(symbol, expiry, exchange)
             self.ib.qualifyContracts(future)
 
             self.log(f"Fetching historical futures: {future.localSymbol}...")
@@ -611,6 +614,7 @@ class IBKRHistoricalFetcher(IBKRFetcher):
     def get_historical_continuous_futures(
         self,
         symbol: str = "MBT",
+        exchange: str = "CME",
         start_date: datetime = None,
         end_date: datetime = None,
         bar_size: str = "1 day",
@@ -623,6 +627,7 @@ class IBKRHistoricalFetcher(IBKRFetcher):
 
         Args:
             symbol: MBT or BTC
+            exchange: Futures exchange (default: 'CME')
             start_date: Start date
             end_date: End date
             bar_size: Bar size
@@ -637,7 +642,7 @@ class IBKRHistoricalFetcher(IBKRFetcher):
         from ib_insync import ContFuture
 
         try:
-            cont = ContFuture(symbol, "CME")
+            cont = ContFuture(symbol, exchange)
             self.ib.qualifyContracts(cont)
 
             self.log(f"Fetching continuous futures: {cont.localSymbol or symbol}...")

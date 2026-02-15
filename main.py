@@ -204,14 +204,47 @@ def cmd_backtest(args):
     print(f"Running backtest on {len(data)} data points...")
     result = backtester.run_backtest(data, holding_days=args.holding_days)
 
+    # Trade log
+    if result.trades:
+        print(f"\n{'='*100}")
+        print("TRADE LOG")
+        print(f"{'='*100}")
+        header = (
+            f"{'#':>3}  {'Entry Date':<12} {'Exit Date':<12} {'Status':<13} "
+            f"{'Entry Basis':>12} {'Exit Basis':>11} "
+            f"{'Days':>5} {'Return%':>8} {'P&L':>12}"
+        )
+        print(header)
+        print("-" * 100)
+        for i, trade in enumerate(result.trades, 1):
+            exit_date = trade.exit_date.strftime("%Y-%m-%d") if trade.exit_date else "-"
+            exit_basis = f"{trade.exit_basis:>11,.2f}" if trade.exit_basis is not None else "          -"
+            return_pct = f"{trade.return_pct * 100:>7.2f}%" if trade.return_pct is not None else "       -"
+            pnl = f"${trade.realized_pnl:>11,.2f}" if trade.realized_pnl is not None else "          -"
+            print(
+                f"{i:>3}  {trade.entry_date.strftime('%Y-%m-%d'):<12} {exit_date:<12} {trade.status:<13} "
+                f"{trade.entry_basis:>12,.2f} {exit_basis} "
+                f"{trade.holding_days:>5} {return_pct} {pnl}"
+            )
+
+    # Summary
     print(f"\n{'='*50}")
     print("BACKTEST RESULTS")
     print(f"{'='*50}")
+    print(f"Period:          {result.start_date.strftime('%Y-%m-%d')} to {result.end_date.strftime('%Y-%m-%d')}")
     print(f"Total Return:    {result.total_return:.2%}")
     print(f"Sharpe Ratio:    {result.sharpe_ratio:.2f}")
     print(f"Max Drawdown:    {result.max_drawdown:.2%}")
-    print(f"Win Rate:        {result.win_rate:.2%}")
+    print(f"Win Rate:        {result.win_rate:.2%} ({result.winning_trades}W / {result.losing_trades}L)")
     print(f"Total Trades:    {result.total_trades}")
+    if result.avg_win:
+        print(f"Avg Win:         {result.avg_win:.2%}")
+    if result.avg_loss:
+        print(f"Avg Loss:        {result.avg_loss:.2%}")
+    if result.total_trades > 0:
+        print(f"Profit Factor:   {result.profit_factor:.2f}")
+    print(f"Initial Capital: ${result.initial_capital:,.2f}")
+    print(f"Final Capital:   ${result.final_capital:,.2f}")
 
 
 def main():
