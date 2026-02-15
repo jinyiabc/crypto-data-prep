@@ -338,4 +338,29 @@ Grid search is a brute-force optimization that tries every combination of parame
 
 This produces ~2,700 combinations (after filtering invalid ones where entry <= stop or exit <= entry). Each combination runs a full backtest, then results are ranked by total return. The best parameters can be saved to JSON (`--save-params`) and loaded into `accumulate_and_backtest.py` (`--params`).
 
+**Example workflow:**
+
+```bash
+# Step 1: Optimize on 2024 data and save best params
+python scripts/optimize_signals.py --year 2024 --save-params data/best_params.json
+
+# Step 2: Run backtest on 2025 data using optimized params
+python scripts/accumulate_and_backtest.py --year 2025 --params data/best_params.json
+```
+
+Sample result (2025 with params optimized on 2024):
+```
+Period:          2024-12-27 to 2025-12-24
+Total Return:    14.74%
+Sharpe Ratio:    15.29
+Max Drawdown:    0.81%
+Win Rate:        81.25% (26W / 6L)
+Total Trades:    32
+Avg Win:         1.34%
+Avg Loss:        -1.03%
+Profit Factor:   1.30
+Initial Capital: $200,000.00
+Final Capital:   $229,473.72
+```
+
 **Caveat:** Optimized parameters may overfit to historical data — the best parameters on 2024 data may not be optimal for 2025.
